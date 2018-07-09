@@ -4,6 +4,7 @@
 	> Created Time: Sat 16 Jun 2018 07:49:11 PM CST
  ************************************************************************/
 
+#include <signal.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -47,6 +48,99 @@ int echo_www(int sock, const char* path, ssize_t size)
     sendfile(sock, fd, NULL, size);
     close(fd);
     return 200;
+}
+
+int exe_cgi(int sock, char* path, char* method, char* query_string)
+{
+    int content_length = -1;
+    char line[MAX];
+    if(strcasecmp(method, "GET") == 0)
+        clear_head(sock);
+    else
+    {
+        do{
+            get_line(sock, line, MAX);
+            if(strncmp(line, "Content-Length: ", 16) == 0)
+                content_length = atoi(line+16);
+        }while(strcmp(line, "\n"));
+        if(content_length == -1)
+            return 404;
+    }
+
+    char method_env[MAX];
+    char query_string_env[MAX];
+    char content_length_env[MAX/8];
+    // method, query_string,  content_length
+    int input[2];
+    int output[2];
+    pipe(input);
+    pipe(output);
+
+    pid_t id = fork();
+    if(id < 0)
+    {
+        return 404;
+    }
+    else if(id == 0)
+    {
+        //子进程
+        //子进程通过input读数据，通过output写数据
+        close(input[1]);
+        close(output[0]);
+
+        // 重定向
+        dup2(input[0], 0);
+        dup2(output[1], 1);
+
+        sprintf(method_env, "METHOD=%s", method);
+        putenv(method_env);
+        if(strcasecmp(method, "GET") == 0)
+        {
+            sprintf(query_string_env, "QUERY_STRING=%s", query_string);
+            putenv(query_string_env);
+        }
+        else
+        {
+            sprintf(content_length_env, "CONTENT_LENGTH=%d", content_length);
+            putenv(content_length_env);
+        }
+
+        execl(path, path, NULL);
+        exit(1);
+    }
+    else
+    {
+        //父进程
+        // 父进程通过input给子进程写，通过output读
+        close(input[0]);
+        close(output[1]);
+
+        char c;
+        int i = 0;
+        if(strcasecmp(method, "POST") == 0)
+        {
+            for(; i<content_length; i++)
+            {
+                recv(sock, &c, 1, 0);
+                write(input[1], &c, 1);
+            }
+        }
+
+        sprintf(line, "HTTP/1.0 200 OK\r\n");
+        send(sock, line, strlen(line), 0);
+        sprintf(line, "Content-Type:text/html;charset=UTF-8\r\n");
+        send(sock, line, strlen(line), 0);
+        sprintf(line, "\r\n");
+        send(sock, line, strlen(line), 0);
+        while(read(output[0], &c, 1) > 0)
+        {
+            send(sock, &c, 1, 0);
+        }
+
+        wait(id);
+        close(input[1]);
+        close(output[0]);
+    }
 }
 
 int startup(int port)
@@ -101,11 +195,32 @@ int get_line(int sock, char line[], int num)//num是希望读取的字符个数
     return i;// 返回实际读取到的字符个数
 }
 
-void echo_error(int errcode)
+void echo_404(int sock)
+{
+    const char* path = "wwwroot/404.html";
+    int fd = open(path, O_RDONLY);
+    if(fd < 0)
+        return ;
+    char line[MAX];
+    sprintf(line, "HTTP/1.0 404 NotFound\r\n");
+    send(sock, line, strlen(line), 0);
+    sprintf(line, "Content-Type:text/html;charset=UTF-8\r\n");
+    send(sock, line, strlen(line), 0);
+    sprintf(line, "\r\n");
+    send(sock, line, strlen(line), 0);
+
+    struct stat st;
+    stat(path, &st);
+    sendfile(sock, fd, NULL, st.st_size);
+    close(fd);
+}
+
+void echo_error(int sock, int errcode)
 {
     switch(errcode)
     {
         case 404:
+            echo_404(sock);
             break;
         case 503:
             break;
@@ -183,11 +298,10 @@ void* handler_request(void* arg)
     }
     else
     {
-        if((st.st_mode & S_IXUSR) || (st.st_mode & S_IXGRP) \
-                    || (st.st_mode & S_IXOTH))
+        if(S_ISDIR(st.st_mode))// 先检测是不是目录文件，然后再看是不是可执行文件 
+            strcat(path, "/index.html");
+        else if((st.st_mode & S_IXUSR) || (st.st_mode & S_IXGRP) || (st.st_mode & S_IXOTH))
             cgi = 1;
-        else if(S_ISDIR(st.st_mode))
-            strcat(path, "index.html");//目录文件
         else
         {}
     }
@@ -196,7 +310,7 @@ void* handler_request(void* arg)
     // cgi和非cgi
     if(cgi)
     {
-        //excu_cgi
+        exe_cgi(sock, path, method, query_string);
     }
     else
         errcode = echo_www(sock, path, st.st_size);
@@ -204,7 +318,7 @@ void* handler_request(void* arg)
 end:
     if(errcode != 200)
     {
-        echo_error(errcode);
+        echo_error(sock, errcode);
     }
     close(sock);
 }
@@ -218,6 +332,13 @@ int main(int argc, char* argv[])
     }
 
     int listen_sock = startup(atoi(argv[1]));
+    //daemon(0, 0);
+    //signal(SIGPIPE, SIG_IGN);
+    struct sigaction act, old;
+    act.sa_handler = SIG_IGN;
+    act.sa_flags = 0;
+    sigemptyset(&act.sa_mask);
+    sigaction(SIGPIPE, &act, &old);
     for(;;)
     {
         struct sockaddr_in client;
@@ -233,6 +354,7 @@ int main(int argc, char* argv[])
         pthread_detach(tid);
     }
     close(listen_sock);
+    sigaction(SIGPIPE, &old, NULL);
     return 0;
 }
 
