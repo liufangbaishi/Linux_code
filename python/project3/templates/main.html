@@ -1,0 +1,23 @@
+<html>
+
+<body background="../static/beijing.png" style="background-size:100% auto;" >
+
+<h1 align="center">西安工业大学招聘信息展示</h1>
+
+<table align="center" width="750" border="1" cellspacing="0" cellpadding="0" style="text-align:center">
+    <tr>
+        <td width="250">公司名</td>
+        <td width="400">信息</td>
+        <td width="100">薪资</td>
+    </tr>
+    {% for item in Data %}
+    <tr>
+        {% for value in item %}
+        <td> {{ value }} </td>
+        {% endfor %}
+    </tr>
+    {% endfor %}
+</table>
+
+</body>
+</html>
