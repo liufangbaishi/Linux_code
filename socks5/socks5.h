@@ -8,21 +8,19 @@
 #define _SOCKS5_H__
 
 #include "epoll.h"
-class Socks5Server: public EpollServer
+class Sock5Server: public EpollServer
 {
 public:
-    Socks5Server()
+    Sock5Server(int port)
+        : EpollServer(port)
     {}
 
     int AuthHandle(int fd);
     int EstablishmentHandle(int fd);
 
-    void Forwarding(Channel* clientChannel, Channel* serverChannel);
-    void RemoveConnect(int fd);
-
     virtual void ConnectEventHandle(int connectfd);
     virtual void ReadEventHandle(int connectfd);
-    virtual void WriteEventHandle(int connectfd);
+    //virtual void WriteEventHandle(int connectfd);  
 };
 
 #endif

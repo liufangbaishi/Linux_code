@@ -11,6 +11,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <errno.h>
+#include <assert.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -18,8 +19,12 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <signal.h>
 
 #include <iostream>
+#include <string>
+#include <map>
 using namespace std;
 
 #define __TRACE__

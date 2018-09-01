@@ -8,16 +8,30 @@
 #define _EPOLL_H__
 
 #include "common.h"
+#include "encry.h"
+
+class IgnoreSigPipe
+{
+public:
+    IgnoreSigPipe()
+    {
+        ::signal(SIGPIPE, SIG_IGN);
+    }
+};
+
+static IgnoreSigPipe initPIPE_IGN;
+
+
 class EpollServer
 {
 public:
-    EpollServer(int port = 8888)
+    EpollServer(int port = 8000)
         : _port(port)
         , _listenfd(-1)
         , _eventfd(-1)
     {}
 
-    ~EpollServer()
+    virtual ~EpollServer()
     {
         if(_listenfd == -1)
             close(_listenfd);
@@ -46,16 +60,47 @@ public:
         }
     }
 
+    enum Sock5State
+    { 
+        AUTH, 
+        ESTABLISHMENT, 
+        FORWARDING
+    };
+    struct Channel
+    {
+        int _fd;
+        string _buff;
+        Channel()
+            : _fd(-1)
+        {}
+    };
+    struct Connect
+    {
+        Sock5State _state;
+        Channel _clientChannel;
+        Channel _serverChannel;
+        int _ref;
+
+        Connect()
+            : _state(AUTH)
+            , _ref(0)
+        {}
+    };
     void Start();
     void EventLoop();
 
+    void SendInLoop(int fd, const char* buf, int len);
+    void Forwarding(Channel* clientChannel, Channel* serverChannel, bool sendencry, bool recvdecrypt);
+    void RemoveConnect(int fd);
+
     virtual void ConnectEventHandle(int connectfd) = 0;
     virtual void ReadEventHandle(int connectfd) = 0;
-    virtual void WriteEventHandle(int connectfd) = 0;
+    virtual void WriteEventHandle(int connectfd);
 protected:
     int _port;
     int _listenfd;
     int _eventfd;
+    map<int, Connect*> _fdConnectMap;
 };
 
 #endif
